@@ -33,12 +33,10 @@ use alloc::{vec, vec::Vec};
 use itertools::Itertools;
 use p3_field::{ExtensionField, Field, PackedFieldExtension, PackedValue, dot_product};
 use p3_maybe_rayon::prelude::*;
+use p3_multilinear_util::{evals::EvaluationsList, multilinear::MultilinearPoint};
 use p3_util::log2_strict_usize;
 
-use crate::{
-    poly::{evals::EvaluationsList, multilinear::MultilinearPoint},
-    utils::log3_strict_usize,
-};
+use crate::utils::log3_strict_usize;
 
 /// Generates grid points for SVO accumulator evaluation.
 ///
@@ -466,7 +464,7 @@ impl<F: Field, EF: ExtensionField<F>> SplitEqInner<F, EF> {
         // Each chunk of size 2^{k-l} is processed independently.
         let chunk_size = 1 << self.k_split();
         let partial_evals = poly
-            .0
+            .as_slice()
             .chunks(chunk_size)
             .map(|poly| {
                 // Pack the polynomial chunk for SIMD operations.
@@ -476,13 +474,13 @@ impl<F: Field, EF: ExtensionField<F>> SplitEqInner<F, EF> {
                 // The outer sum is over right indices (parallelized).
                 // The inner sum is over left indices (vectorized via packing).
                 let sum = poly
-                    .par_chunks(self.eq1.0.len())
-                    .zip_eq(self.eq0.0.par_iter())
+                    .par_chunks(self.eq1.num_evals())
+                    .zip_eq(self.eq0.as_slice().par_iter())
                     .map(|(poly, &eq0)| {
                         // Inner sum: sum_{x_1} eq1[x_1] * poly[x_0, x_1]
                         let inner_sum = poly
                             .iter()
-                            .zip_eq(self.eq1.0.iter())
+                            .zip_eq(self.eq1.iter())
                             .map(|(&f, &eq1)| eq1 * f)
                             .sum::<EF::ExtensionPacking>();
                         // Multiply by the eq0 weight.
@@ -547,12 +545,12 @@ impl<F: Field, EF: ExtensionField<F>> SplitEqInner<F, EF> {
 
             // Process output in chunks matching the left table size.
             out.par_chunks_mut(eq_split.eq1.num_evals())
-                .zip(eq_split.eq0.0.par_iter())
+                .zip(eq_split.eq0.as_slice().par_iter())
                 .for_each(|(chunk, &right)| {
                     // For each position in the chunk, add: left[pos] * right * scale
                     chunk
                         .iter_mut()
-                        .zip(eq_split.eq1.0.iter())
+                        .zip(eq_split.eq1.iter())
                         .for_each(|(out, &left)| *out += left * right * scale);
                 });
         }

@@ -1,8 +1,7 @@
 use p3_field::{ExtensionField, Field, TwoAdicField};
+use p3_multilinear_util::multilinear::MultilinearPoint;
 
-use crate::{
-    parameters::FoldingFactor, poly::multilinear::MultilinearPoint, whir::constraints::Constraint,
-};
+use crate::{parameters::FoldingFactor, whir::constraints::Constraint};
 
 /// Evaluate a single round's constraint.
 fn eval_round<F: Field, EF: ExtensionField<F> + TwoAdicField>(
@@ -68,13 +67,13 @@ mod tests {
 
     use p3_baby_bear::BabyBear;
     use p3_field::{PrimeCharacteristicRing, extension::BinomialExtensionField};
+    use p3_multilinear_util::evals::EvaluationsList;
     use proptest::prelude::*;
     use rand::{RngExt, SeedableRng, rngs::SmallRng};
 
     use super::*;
     use crate::{
         parameters::FoldingFactor,
-        poly::evals::EvaluationsList,
         whir::constraints::statement::{EqStatement, SelectStatement},
     };
 

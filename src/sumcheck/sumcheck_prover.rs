@@ -2,10 +2,10 @@ use alloc::vec::Vec;
 
 use p3_challenger::{FieldChallenger, GrindingChallenger};
 use p3_field::{ExtensionField, Field, PackedFieldExtension, PackedValue, dot_product};
+use p3_multilinear_util::{evals::EvaluationsList as Poly, multilinear::MultilinearPoint as Point};
 use p3_util::log2_strict_usize;
 
 use crate::{
-    poly::{evals::EvaluationsList as Poly, multilinear::MultilinearPoint as Point},
     sumcheck::{
         extrapolate_012, lagrange::lagrange_weights_012_multi,
         product_polynomial::ProductPolynomial, svo::SplitEq,
@@ -219,7 +219,7 @@ where
 
         let poly = poly.compress_multi_into_packed(&rs);
         let mut weights = Poly::<EF::ExtensionPacking>::zero(poly.num_variables());
-        SplitEq::combine_into_packed(&mut weights.0, statements, alpha, &rs);
+        SplitEq::combine_into_packed(weights.as_mut_slice(), statements, alpha, &rs);
         let poly = ProductPolynomial::<F, EF>::new_packed(poly, weights);
 
         debug_assert_eq!(poly.dot_product(), sum);

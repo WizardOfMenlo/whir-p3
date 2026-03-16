@@ -9,11 +9,11 @@ use p3_matrix::{
     dense::{RowMajorMatrix, RowMajorMatrixView},
 };
 use p3_maybe_rayon::prelude::*;
-use p3_multilinear_util::eq_batch::eval_eq_batch;
+use p3_multilinear_util::{
+    eq_batch::eval_eq_batch, evals::EvaluationsList, multilinear::MultilinearPoint,
+};
 use p3_util::log2_strict_usize;
 use tracing::instrument;
-
-use crate::poly::{evals::EvaluationsList, multilinear::MultilinearPoint};
 
 /// Given multiple points in matrix form where each column is a point `P_i`,
 /// builds individual eq coefficients `eq(P_i, X)` for all points `X` in the boolean hypercube
@@ -225,7 +225,7 @@ impl<F: Field> EqStatement<F> {
         // This computes W(x) = ∑_i γ^i * eq(x, z_i) for all x ∈ {0,1}^k.
         eval_eq_batch::<Base, F, INITIALIZED>(
             points_matrix.as_view(),
-            &mut acc_weights.0,
+            acc_weights.as_mut_slice(),
             &challenges,
         );
 
@@ -275,9 +275,9 @@ impl<F: Field> EqStatement<F> {
                 .for_each(|(i, (point, challenge))| {
                     let eq = EvaluationsList::new_from_point(point.as_slice(), challenge);
                     weights
-                        .0
+                        .as_mut_slice()
                         .iter_mut()
-                        .zip_eq(eq.0.chunks(Base::Packing::WIDTH))
+                        .zip_eq(eq.as_slice().chunks(Base::Packing::WIDTH))
                         .for_each(|(out, chunk)| {
                             let packed = F::ExtensionPacking::from_ext_slice(chunk);
                             if INITIALIZED || i > 0 {
@@ -296,7 +296,7 @@ impl<F: Field> EqStatement<F> {
         let right = batch_eqs::<Base, F>(right, challenge);
 
         weights
-            .0
+            .as_mut_slice()
             .par_chunks_mut(left.height())
             .zip_eq(right.par_row_slices())
             .for_each(|(out, right)| {
@@ -384,9 +384,9 @@ mod tests {
 
         // Expected evals for eq_z(X) where z = (1).
         // For x=0, eq=0. For x=1, eq=1.
-        let expected_combined_evals_vec = EvaluationsList::new_from_point(point.as_slice(), F::ONE);
+        let expected_combined_evals = EvaluationsList::new_from_point(point.as_slice(), F::ONE);
 
-        assert_eq!(combined_evals, expected_combined_evals_vec);
+        assert_eq!(combined_evals, expected_combined_evals);
         assert_eq!(combined_sum, expected_eval);
     }
 
@@ -412,7 +412,7 @@ mod tests {
         // Expected evals: W(X) = eq_z1(X) + challenge * eq_z2(X)
         let expected_eq1 = EvaluationsList::new_from_point(point1.as_slice(), F::ONE);
         let expected_eq2 = EvaluationsList::new_from_point(point2.as_slice(), challenge);
-        let expected_combined_evals_vec = EvaluationsList::new(
+        let expected_combined_evals = EvaluationsList::new(
             expected_eq1
                 .iter()
                 .zip(expected_eq2.iter())
@@ -423,7 +423,7 @@ mod tests {
         // Expected sum: S = s1 + challenge * s2
         let expected_combined_sum = eval1 + challenge * eval2;
 
-        assert_eq!(combined_evals, expected_combined_evals_vec);
+        assert_eq!(combined_evals, expected_combined_evals);
         assert_eq!(combined_sum, expected_combined_sum);
     }
 
@@ -631,7 +631,7 @@ mod tests {
         let k_pack = log2_strict_usize(<F as Field>::Packing::WIDTH);
 
         for k in k_pack..10 {
-            let mut out0 = EvaluationsList::zero(k);
+            let mut out0 = EvaluationsList::<EF>::zero(k);
             let mut out1 =
                 EvaluationsList::<<EF as ExtensionField<F>>::ExtensionPacking>::zero(k - k_pack);
             let mut sum0 = EF::ZERO;
@@ -654,7 +654,7 @@ mod tests {
                     init = true;
                 }
 
-                assert_eq!(out0.0,<<EF as ExtensionField<F>>::ExtensionPacking as PackedFieldExtension<F, EF>>::to_ext_iter(
+                assert_eq!(out0.as_slice(),&<<EF as ExtensionField<F>>::ExtensionPacking as PackedFieldExtension<F, EF>>::to_ext_iter(
                     out1.as_slice().iter().copied(),
                 )
                 .collect::<Vec<_>>());

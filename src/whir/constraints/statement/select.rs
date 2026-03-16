@@ -9,10 +9,9 @@ use p3_matrix::{
     dense::{RowMajorMatrix, RowMajorMatrixView},
 };
 use p3_maybe_rayon::prelude::*;
+use p3_multilinear_util::{evals::EvaluationsList, multilinear::MultilinearPoint};
 use p3_util::log2_strict_usize;
 use tracing::instrument;
-
-use crate::poly::{evals::EvaluationsList, multilinear::MultilinearPoint};
 
 /// Expands powers-of-two of table into full power table.
 /// Each column in `points` is powers-of-two of a variable that should be layouted in reverse order as:
@@ -407,7 +406,7 @@ impl<F: Field, EF: ExtensionField<F>> SelectStatement<F, EF> {
         // For each hypercube point b (each row of the select matrix):
         //   W(b) += Σ_i γ^{i+shift} · select(pow(z_i), b)
         acc.par_chunks(n)
-            .zip(acc_weights.0.par_iter_mut())
+            .zip(acc_weights.as_mut_slice().par_iter_mut())
             .for_each(|(row, weight_out)| {
                 // Compute the linear combination of this row using challenge powers.
                 *weight_out += row.iter().zip(challenges.iter()).fold(
@@ -452,7 +451,7 @@ impl<F: Field, EF: ExtensionField<F>> SelectStatement<F, EF> {
                 .for_each(|(&var, challenge)| {
                     let pow = EF::from(var).shifted_powers(challenge).collect_n(1 << k);
                     weights
-                        .0
+                        .as_mut_slice()
                         .iter_mut()
                         .zip_eq(pow.chunks(F::Packing::WIDTH))
                         .for_each(|(out, chunk)| {
@@ -481,7 +480,7 @@ impl<F: Field, EF: ExtensionField<F>> SelectStatement<F, EF> {
             .collect::<Vec<_>>();
 
         weights
-            .0
+            .as_mut_slice()
             .par_chunks_mut(left.height())
             .zip(right.par_row_slices())
             .for_each(|(out, right)| {
@@ -660,7 +659,6 @@ mod tests {
         //
         // For k=2 variables, we have a 2^2 = 4-point domain.
         let k = 2;
-        let domain_size = 1 << k;
 
         // Create a statement with one constraint: p(z) = s.
         let mut statement = SelectStatement::<F, F>::initialize(k);
@@ -686,13 +684,9 @@ mod tests {
         // The weight polynomial should be W(b) = select(pow(z), b) for all b ∈ {0,1}^k.
         //
         // Verify each entry manually using the property: select(pow(z), b) = z^b.
-        for b in 0..domain_size {
+        for (b, acc_weight) in acc_weights.as_slice().iter().enumerate() {
             let expected_weight = z.exp_u64(b as u64);
-            assert_eq!(
-                acc_weights.as_slice()[b],
-                expected_weight,
-                "Weight mismatch at index {b}"
-            );
+            assert_eq!(*acc_weight, expected_weight, "Weight mismatch at index {b}");
         }
     }
 
@@ -702,7 +696,6 @@ mod tests {
         //
         // For k=2 variables, we have a 2^2 = 4-point domain.
         let k = 2;
-        let domain_size = 1 << k;
 
         // Create a statement with two constraints:
         // - Constraint 0: p(z0) = s0
@@ -735,15 +728,11 @@ mod tests {
         // W(b) = γ^0 · select(pow(z0), b) + γ^1 · select(pow(z1), b)
         //      = select(pow(z0), b) + gamma · select(pow(z1), b)
         // Using the property: select(pow(z), b) = z^b.
-        for b in 0..domain_size {
+        for (b, acc_weight) in acc_weights.as_slice().iter().enumerate() {
             let weight0 = z0.exp_u64(b as u64);
             let weight1 = z1.exp_u64(b as u64);
             let expected_weight = weight0 + gamma * weight1;
-            assert_eq!(
-                acc_weights.as_slice()[b],
-                expected_weight,
-                "Weight mismatch at index {b}"
-            );
+            assert_eq!(*acc_weight, expected_weight, "Weight mismatch at index {b}");
         }
     }
 
@@ -754,7 +743,6 @@ mod tests {
         // The shift parameter allows multiple statement types to use non-overlapping
         // challenge powers for batching.
         let k = 1;
-        let domain_size = 1 << k;
 
         // Create a statement with one constraint: p(z) = s.
         let mut statement = SelectStatement::<F, F>::initialize(k);
@@ -781,14 +769,10 @@ mod tests {
 
         // The weight polynomial should be W(b) = γ^shift · select(pow(z), b).
         // Using the property: select(pow(z), b) = z^b.
-        for b in 0..domain_size {
+        for (b, acc_weight) in acc_weights.as_slice().iter().enumerate() {
             let select_val = z.exp_u64(b as u64);
             let expected_weight = gamma_to_shift * select_val;
-            assert_eq!(
-                acc_weights.as_slice()[b],
-                expected_weight,
-                "Weight mismatch at index {b}"
-            );
+            assert_eq!(*acc_weight, expected_weight, "Weight mismatch at index {b}");
         }
     }
 
@@ -827,7 +811,6 @@ mod tests {
         //
         // This is important for batching multiple statements together.
         let k = 1;
-        let domain_size = 1 << k;
 
         // Create first statement with constraint p(z1) = s1.
         let mut statement1 = SelectStatement::<F, F>::initialize(k);
@@ -864,6 +847,7 @@ mod tests {
 
         // The accumulated weights should be the sum of both select functions.
         // Using the property: select(pow(z), b) = z^b.
+        let domain_size = 1 << k;
         for b in 0..domain_size {
             let weight2 = z2.exp_u64(b as u64);
             let expected_weight = intermediate_weights.as_slice()[b] + weight2;
@@ -933,7 +917,6 @@ mod tests {
         // 1. verify() should return true
         // 2. The combined weights should correctly compute the polynomial evaluations
         let k = 2;
-        let domain_size = 1 << k;
 
         // Create a simple polynomial: evaluations [c0, c1, c2, c3].
         let c0 = F::from_u64(1);
@@ -970,8 +953,8 @@ mod tests {
         // The weight polynomial should satisfy:
         // Σ_{b ∈ {0,1}^k} poly(b) · W(b) = expected_eval
         let mut computed_sum = F::ZERO;
-        for b in 0..domain_size {
-            computed_sum += poly.as_slice()[b] * acc_weights.as_slice()[b];
+        for (poly_val, acc_weight) in poly.as_slice().iter().zip(acc_weights.as_slice().iter()) {
+            computed_sum += *poly_val * *acc_weight;
         }
         assert_eq!(computed_sum, expected_eval);
     }
@@ -1103,7 +1086,7 @@ mod tests {
 
         let mut shift = 0;
         for k in k_pack..10 {
-            let mut out0 = EvaluationsList::zero(k);
+            let mut out0 = EvaluationsList::<EF>::zero(k);
             let mut out1 = EvaluationsList::<PackedExt>::zero(k - k_pack);
             let mut sum0 = EF::ZERO;
             let mut sum1 = EF::ZERO;
@@ -1117,7 +1100,7 @@ mod tests {
                 statement.combine_packed(&mut out1, &mut sum1, challenge, shift);
                 shift += statement.len();
 
-                assert_eq!(out0.0,<<EF as ExtensionField<F>>::ExtensionPacking as PackedFieldExtension<F, EF>>::to_ext_iter(
+                assert_eq!(out0.as_slice(),&<<EF as ExtensionField<F>>::ExtensionPacking as PackedFieldExtension<F, EF>>::to_ext_iter(
                     out1.as_slice().iter().copied(),
                 )
                 .collect::<Vec<_>>());
