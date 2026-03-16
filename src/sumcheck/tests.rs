@@ -11,7 +11,7 @@ use rand::{RngExt, SeedableRng, rngs::SmallRng};
 use crate::{
     fiat_shamir::domain_separator::DomainSeparator,
     parameters::{FoldingFactor, ProtocolParameters, errors::SecurityAssumption},
-    sumcheck::sumcheck_prover::Sumcheck,
+    sumcheck::{SumcheckData, prover::SumcheckProver, verify_final_sumcheck_rounds},
     whir::{
         constraints::{
             Constraint,
@@ -19,8 +19,7 @@ use crate::{
             statement::{EqStatement, SelectStatement, initial::InitialStatement},
         },
         parameters::SumcheckStrategy,
-        proof::{SumcheckData, WhirProof},
-        verifier::sumcheck::{verify_final_sumcheck_rounds, verify_sumcheck_rounds},
+        proof::WhirProof,
     },
 };
 
@@ -322,7 +321,7 @@ fn run_sumcheck_test(
     // h(X) = c0 + c1*X + c2*X^2 for each variable being folded, writes them into
     // the proof, and returns the partially folded state along with the verifier's
     // random challenges (prover_randomness) accumulated so far.
-    let (mut sumcheck, mut prover_randomness) = Sumcheck::from_base_evals(
+    let (mut sumcheck, mut prover_randomness) = SumcheckProver::from_base_evals(
         &mut proof.initial_sumcheck,
         &mut prover_challenger,
         folding0,
@@ -456,13 +455,10 @@ fn run_sumcheck_test(
         // h(0) + h(1) == claimed_sum, then update sum := h(r) with the challenge r.
         // The returned challenges are appended to the verifier's random point.
         verifier_randomness.extend(
-            &verify_sumcheck_rounds(
-                &proof.initial_sumcheck,
-                &mut verifier_challenger,
-                &mut sum,
-                0,
-            )
-            .unwrap(),
+            &proof
+                .initial_sumcheck
+                .verify_rounds(&mut verifier_challenger, &mut sum, 0)
+                .unwrap(),
         );
 
         num_vars_inter -= folding_factor.at_round(0);
@@ -492,13 +488,10 @@ fn run_sumcheck_test(
         // Note: proof.rounds[round - 1] because rounds are 0-indexed but we start at round 1
         let folding = folding_factor.at_round(round);
         verifier_randomness.extend(
-            &verify_sumcheck_rounds(
-                &proof.rounds[round - 1].sumcheck,
-                &mut verifier_challenger,
-                &mut sum,
-                0,
-            )
-            .unwrap(),
+            &proof.rounds[round - 1]
+                .sumcheck
+                .verify_rounds(&mut verifier_challenger, &mut sum, 0)
+                .unwrap(),
         );
 
         num_vars_inter -= folding;
